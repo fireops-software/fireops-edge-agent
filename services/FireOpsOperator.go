@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
+	"net/http"
 	"net/url"
 	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/gorilla/websocket"
 	"github.com/uoul/go-common/collections"
 	"github.com/uoul/go-common/log"
-	"golang.org/x/net/websocket"
 
 	"github.com/fireops-software/fireops-edge-agent/api"
 	appError "github.com/fireops-software/fireops-edge-agent/error"
@@ -72,8 +72,8 @@ type installRequest []struct {
 }
 type installResponse []container.Summary
 
-type destroyRequest []struct{}
-type destroyResponse []struct{}
+type destroyRequest struct{}
+type destroyResponse struct{}
 
 // ---------------------------------------------------------------------------
 // Private
@@ -81,45 +81,40 @@ type destroyResponse []struct{}
 
 func (f *FireOpsOperator) run() error {
 	// Create Websocket Config
-	config, err := websocket.NewConfig(f.fireOpsApi.String(), originOfWsUrl(f.fireOpsApi))
-	if err != nil {
-		return appError.NewErrFireOpsApi("failed to create websocket config - %v", err)
-	}
-	// Set Headers
-	if len(f.fireOpsToken) > 0 {
-		config.Header.Add("Authorization", fmt.Sprintf("Bearer %s", f.fireOpsToken))
-	}
-	// Dial Websocket
-	ws, err := websocket.DialConfig(config)
+	ws, _, err := websocket.DefaultDialer.DialContext(f.ctx, f.fireOpsApi.String(), http.Header{"Authorization": []string{f.fireOpsToken}})
 	if err != nil {
 		return appError.NewErrFireOpsApi("failed to create websocket - %v", err)
 	}
-	defer ws.Close()
+	defer func() {
+		// Send close message to client
+		closeMessage := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "fireops-edge-agent close connection")
+		ws.WriteMessage(websocket.CloseMessage, closeMessage)
+		// Close the connection
+		ws.Close()
+	}()
 	// Handle incomming messages
 	for {
-		// Read incomming message
-		data, err := f.readMessage(ws)
-		if err != nil {
-			return err
-		}
-		// Deserialize incomming message
-		raw := wsRequest[any]{}
-		if err := json.Unmarshal(data, &raw); err != nil {
+		// Read Incomming Message
+		raw := wsRequest[json.RawMessage]{}
+		if err := ws.ReadJSON(&raw); err != nil {
 			return err
 		}
 		// Route message based on message type
 		switch raw.MsgType {
 		case MESSAGE_TYPE_GET:
+			f.logger.Tracef("New incomming Get request %v", string(raw.Body))
 			err := routeMsg(ws, f.sendMessage, raw, f.handleGetDeploymentRequest)
 			if err != nil {
 				return err
 			}
 		case MESSAGE_TYPE_INSTALL:
+			f.logger.Tracef("New incomming Install request %v", string(raw.Body))
 			err := routeMsg(ws, f.sendMessage, raw, f.handleInstallRequest)
 			if err != nil {
 				return err
 			}
 		case MESSAGE_TYPE_DESTROY:
+			f.logger.Tracef("New incomming Destroy request %v", string(raw.Body))
 			err := routeMsg(ws, f.sendMessage, raw, f.handleDestroyRequest)
 			if err != nil {
 				return err
@@ -132,89 +127,59 @@ func (f *FireOpsOperator) run() error {
 	}
 }
 
-func (f *FireOpsOperator) readMessage(ws net.Conn) ([]byte, error) {
-	buffer := make([]byte, WS_BUFFER_SIZE)
-	n := WS_BUFFER_SIZE
-	data := []byte{}
-	for n >= WS_BUFFER_SIZE {
-		n, err := ws.Read(buffer)
-		if err != nil {
-			return nil, err
-		}
-		data = append(data, buffer[:n]...)
-	}
-	return data, nil
-}
-
-func (f *FireOpsOperator) sendMessage(ws net.Conn, msg any) error {
+func (f *FireOpsOperator) sendMessage(ws *websocket.Conn, msg any) error {
 	f.wsMux.Lock()
 	defer f.wsMux.Unlock()
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	_, err = ws.Write(data)
-	return err
+	return ws.WriteJSON(msg)
 }
 
-func routeMsg[I, O any](ws net.Conn, sendFunc func(net.Conn, any) error, msg wsRequest[any], handler func(wsRequest[I]) wsResponse[O]) error {
-	req, err := convertMsg[I](&msg)
+func routeMsg[I, O any](ws *websocket.Conn, sendFunc func(*websocket.Conn, any) error, msg wsRequest[json.RawMessage], handler func(wsRequest[I]) wsResponse[O]) error {
+	body := *new(I)
+	err := json.Unmarshal(msg.Body, &body)
 	if err != nil {
 		if err := sendFunc(ws, wsResponse[O]{MsgId: msg.MsgId, MsgType: msg.MsgType, Error: err, Body: *new(O)}); err != nil {
 			return err
 		}
 	} else {
-		if err := sendFunc(ws, handler(*req)); err != nil {
+		if err := sendFunc(ws, handler(wsRequest[I]{MsgId: msg.MsgId, MsgType: msg.MsgType, Body: body})); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func convertMsg[T any](msg *wsRequest[any]) (*wsRequest[T], error) {
-	b, ok := msg.Body.(T)
-	if !ok {
-		return nil, appError.NewErrUnsupportedMsgType("body does not match message of type %s", msg.MsgType)
-	}
-	return &wsRequest[T]{
-		MsgId:   msg.MsgId,
-		MsgType: msg.MsgType,
-		Body:    b,
-	}, nil
-}
-
 func (f *FireOpsOperator) cleanDocker(ctx context.Context) error {
+	f.logger.Tracef("Listing all containers...")
 	containers := <-f.dockerApi.ListContainers(ctx)
 	if containers.Error != nil {
 		return containers.Error
 	}
+	f.logger.Tracef("List of all containers runnning in context: %v", containers.Result)
 	// Remove all containers
 	for _, container := range containers.Result {
+		f.logger.Tracef("Removing container %v...", container.Names)
 		remove := <-f.dockerApi.RemoveContainer(ctx, container.ID)
 		if remove.Error != nil {
 			return remove.Error
 		}
+		f.logger.Tracef("Container %v removed", container.Names)
 	}
 	// Prune images
+	f.logger.Tracef("Prune images...")
 	imagePrune := <-f.dockerApi.PruneImages(ctx, true)
 	if imagePrune.Error != nil {
 		return imagePrune.Error
 	}
+	f.logger.Tracef("Images pruned %v", imagePrune.Result)
 	// Prune networks
+	f.logger.Tracef("Prune networks...")
 	netPrune := <-f.dockerApi.PruneNetworks(ctx)
 	if netPrune.Error != nil {
 		return netPrune.Error
 	}
+	f.logger.Tracef("Networks pruned %v", netPrune.Result)
 	// Return success
 	return nil
-}
-
-func originOfWsUrl(wsUrl url.URL) string {
-	scheme := "http"
-	if wsUrl.Scheme == "wss" {
-		scheme = "https"
-	}
-	return fmt.Sprintf("%s://%s", scheme, wsUrl.Host)
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +190,9 @@ func (f *FireOpsOperator) handleGetDeploymentRequest(msg wsRequest[getDeployment
 	ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
 	defer cancel()
 	// Get Running containers from docker api
+	f.logger.Tracef("Listing all containers...")
 	containers := <-f.dockerApi.ListContainers(ctx)
+	f.logger.Tracef("List of all containers runnning in context: %v", containers.Result)
 	// Return current state
 	return wsResponse[getDeploymentResponse]{
 		MsgId:   msg.MsgId,
@@ -248,6 +215,7 @@ func (f *FireOpsOperator) handleInstallRequest(msg wsRequest[installRequest]) ws
 		}
 	}
 	// Create Network
+	f.logger.Tracef("Creating docker network %s...", f.fireopsNetwork)
 	dockerNet := <-f.dockerApi.CreateNetwork(ctx, f.fireopsNetwork, network.NetworkBridge)
 	if dockerNet.Error != nil {
 		return wsResponse[installResponse]{
@@ -256,6 +224,7 @@ func (f *FireOpsOperator) handleInstallRequest(msg wsRequest[installRequest]) ws
 			Error:   dockerNet.Error,
 		}
 	}
+	f.logger.Tracef("Nework %s created with id %s", f.fireopsNetwork, dockerNet.Result.ID)
 	// Install services
 	for _, service := range msg.Body {
 		env := []string{}
@@ -263,6 +232,7 @@ func (f *FireOpsOperator) handleInstallRequest(msg wsRequest[installRequest]) ws
 			env = append(env, fmt.Sprintf("%s=%s", k, v))
 		}
 		// Create container
+		f.logger.Tracef("Creating docker container %s...", service.ServiceName)
 		create := <-f.dockerApi.CreateContainer(
 			ctx,
 			service.Image,
@@ -282,7 +252,9 @@ func (f *FireOpsOperator) handleInstallRequest(msg wsRequest[installRequest]) ws
 				Error:   create.Error,
 			}
 		}
+		f.logger.Tracef("Container %s created with id %s", service.ServiceName, create.Result.ID)
 		// Start container
+		f.logger.Tracef("Starting docker container: %s...", service.ServiceName)
 		start := <-f.dockerApi.StartContainer(ctx, create.Result.ID)
 		if start.Error != nil {
 			return wsResponse[installResponse]{
@@ -291,8 +263,10 @@ func (f *FireOpsOperator) handleInstallRequest(msg wsRequest[installRequest]) ws
 				Error:   start.Error,
 			}
 		}
+		f.logger.Tracef("Container %s started", service.ServiceName)
 	}
 	// Get containers
+	f.logger.Tracef("List running containers...")
 	containers := <-f.dockerApi.ListContainers(ctx)
 	if containers.Error != nil {
 		return wsResponse[installResponse]{
@@ -301,6 +275,7 @@ func (f *FireOpsOperator) handleInstallRequest(msg wsRequest[installRequest]) ws
 			Error:   containers.Error,
 		}
 	}
+	f.logger.Tracef("Running containers: %v", containers.Result)
 	// Return result
 	return wsResponse[installResponse]{
 		MsgId:   msg.MsgId,
