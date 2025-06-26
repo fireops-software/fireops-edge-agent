@@ -26,9 +26,17 @@ jobs:
     - name: Get dependencies
       run: go mod download
 
-    - name: Build for Linux
+    - name: Build for Linux(amd64)
       run: |
         GOOS=linux GOARCH=amd64 go build -o build/fireops-edge-agent-linux-amd64 .
+
+    - name: Build for Linux(arm64)
+      run: |
+        GOOS=linux GOARCH=arm64 go build -o build/fireops-edge-agent-linux-arm64 .
+
+    - name: Build for Linux(arm/v7)
+      run: |
+        GOOS=linux GOARCH=arm GOARM=7 go build -o build/fireops-edge-agent-linux-armv7 .
 
     - name: Build for Windows
       run: |
