@@ -1,0 +1,56 @@
+
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - '*'
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+
+    - name: Get dependencies
+      run: go mod download
+
+    - name: Build for Linux
+      run: |
+        GOOS=linux GOARCH=amd64 go build -o build/fireops-edge-agent-linux-amd64 .
+
+    - name: Build for Windows
+      run: |
+        GOOS=windows GOARCH=amd64 go build -o build/fireops-edge-agent-windows-amd64.exe .
+
+    - name: Build for macOS (Intel)
+      run: |
+        GOOS=darwin GOARCH=amd64 go build -o build/fireops-edge-agent-darwin-amd64 .
+
+    - name: Build for macOS (Apple Silicon)
+      run: |
+        GOOS=darwin GOARCH=arm64 go build -o build/fireops-edge-agent-darwin-arm64 .
+
+    - name: Create checksums
+      run: |
+        cd build
+        sha256sum * > checksums.txt
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          build/fireops-edge-agent-linux-amd64
+          build/fireops-edge-agent-windows-amd64.exe
+          build/fireops-edge-agent-darwin-amd64
+          build/fireops-edge-agent-darwin-arm64
+          build/checksums.txt
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
