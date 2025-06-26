@@ -60,6 +60,8 @@ jobs:
       with:
         files: |
           build/fireops-edge-agent-linux-amd64
+          build/fireops-edge-agent-linux-arm64
+          build/fireops-edge-agent-linux-armv7
           build/fireops-edge-agent-windows-amd64.exe
           build/fireops-edge-agent-darwin-amd64
           build/fireops-edge-agent-darwin-arm64
