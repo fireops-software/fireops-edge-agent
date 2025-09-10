@@ -21,7 +21,14 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.24'
+        go-version: '1.25'
+    
+    - name: Replace single file
+      uses: richardrigutins/replace-in-files@v2
+      with:
+        files: 'main.go'
+        search-text: '{VERSION}'
+        replacement-text: ${{ vars.VERSION }}
 
     - name: Get dependencies
       run: go mod download
