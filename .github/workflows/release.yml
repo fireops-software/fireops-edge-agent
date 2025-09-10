@@ -61,10 +61,20 @@ jobs:
       run: |
         cd build
         sha256sum * > checksums.txt
+    
+    - name: Create git tag
+      run: |
+        git tag ${{ vars.VERSION }}
+
+    - name: Push git tag
+      run: |
+        git push origin ${{ vars.VERSION }}
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        tag_name: ${{ vars.VERSION }}
         files: |
           build/fireops-edge-agent-linux-amd64
           build/fireops-edge-agent-linux-arm64
@@ -74,5 +84,3 @@ jobs:
           build/fireops-edge-agent-darwin-arm64
           build/checksums.txt
         generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
