@@ -16,15 +16,18 @@ import (
 	"github.com/uoul/go-common/log"
 
 	"github.com/fireops-software/fireops-edge-agent/api"
+	"github.com/fireops-software/fireops-edge-agent/domain"
 	appError "github.com/fireops-software/fireops-edge-agent/error"
 )
 
 const (
 	WS_BUFFER_SIZE = 1024
 
-	MESSAGE_TYPE_GET     = msgType("Get")
-	MESSAGE_TYPE_INSTALL = msgType("Install")
-	MESSAGE_TYPE_DESTROY = msgType("Destroy")
+	MESSAGE_TYPE_GET_CONTAINERS     = msgType("GetContainers")
+	MESSAGE_TYPE_INSTALL            = msgType("Install")
+	MESSAGE_TYPE_DESTROY            = msgType("Destroy")
+	MESSAGE_TYPE_GET_CONTAINER_LOGS = msgType("GetContainerLogs")
+	MESSAGE_TYPE_GET_AGENT_VERSION  = msgType("GetAgentVersion")
 )
 
 // ---------------------------------------------------------------------------
@@ -39,6 +42,7 @@ type FireOpsOperator struct {
 
 	fireopsNetwork string
 	retryInterval  time.Duration
+	agentVersion   string
 
 	wsMux sync.Mutex
 }
@@ -75,6 +79,19 @@ type installResponse []container.Summary
 type destroyRequest struct{}
 type destroyResponse struct{}
 
+type getAgentVersionRequest struct{}
+type getAgentVersionResponse struct {
+	Version string
+}
+
+type getLogsRequest struct {
+	ContainerId string
+	Len         uint
+}
+type getLogsResponse struct {
+	LogEntries []domain.ContainerLogEntry
+}
+
 // ---------------------------------------------------------------------------
 // Private
 // ---------------------------------------------------------------------------
@@ -101,22 +118,29 @@ func (f *FireOpsOperator) run() error {
 		}
 		// Route message based on message type
 		switch raw.MsgType {
-		case MESSAGE_TYPE_GET:
-			f.logger.Tracef("New incomming Get request %v", string(raw.Body))
-			err := routeMsg(ws, f.sendMessage, raw, f.handleGetDeploymentRequest)
-			if err != nil {
+		case MESSAGE_TYPE_GET_CONTAINERS:
+			f.logger.Tracef("New incomming %s request %v", MESSAGE_TYPE_GET_CONTAINERS, string(raw.Body))
+			if err := routeMsg(ws, f.sendMessage, raw, f.handleGetDeploymentRequest); err != nil {
 				return err
 			}
 		case MESSAGE_TYPE_INSTALL:
-			f.logger.Tracef("New incomming Install request %v", string(raw.Body))
-			err := routeMsg(ws, f.sendMessage, raw, f.handleInstallRequest)
-			if err != nil {
+			f.logger.Tracef("New incomming %s request %v", MESSAGE_TYPE_INSTALL, string(raw.Body))
+			if err := routeMsg(ws, f.sendMessage, raw, f.handleInstallRequest); err != nil {
 				return err
 			}
 		case MESSAGE_TYPE_DESTROY:
-			f.logger.Tracef("New incomming Destroy request %v", string(raw.Body))
-			err := routeMsg(ws, f.sendMessage, raw, f.handleDestroyRequest)
-			if err != nil {
+			f.logger.Tracef("New incomming %s request %v", MESSAGE_TYPE_DESTROY, string(raw.Body))
+			if err := routeMsg(ws, f.sendMessage, raw, f.handleDestroyRequest); err != nil {
+				return err
+			}
+		case MESSAGE_TYPE_GET_CONTAINER_LOGS:
+			f.logger.Tracef("New incomming %s request %v", MESSAGE_TYPE_GET_CONTAINER_LOGS, string(raw.Body))
+			if err := routeMsg(ws, f.sendMessage, raw, f.handleGetLogsRequest); err != nil {
+				return err
+			}
+		case MESSAGE_TYPE_GET_AGENT_VERSION:
+			f.logger.Tracef("New incomming %s request %v", MESSAGE_TYPE_GET_AGENT_VERSION, string(raw.Body))
+			if err := routeMsg(ws, f.sendMessage, raw, f.handleGetAgentVersionRequest); err != nil {
 				return err
 			}
 		default:
@@ -296,6 +320,34 @@ func (f *FireOpsOperator) handleDestroyRequest(msg wsRequest[destroyRequest]) ws
 	}
 }
 
+func (f *FireOpsOperator) handleGetLogsRequest(msg wsRequest[getLogsRequest]) wsResponse[getLogsResponse] {
+	// Create Context with timeout for Docker api call
+	ctx, cancel := context.WithTimeout(f.ctx, 30*time.Second)
+	defer cancel()
+	// Get logs of container
+	logEntries := <-f.dockerApi.GetContainerLogs(ctx, msg.Body.ContainerId, msg.Body.Len)
+	return wsResponse[getLogsResponse]{
+		MsgId:   msg.MsgId,
+		MsgType: msg.MsgType,
+		Error:   logEntries.Error,
+		Body: getLogsResponse{
+			LogEntries: logEntries.Result,
+		},
+	}
+}
+
+func (f *FireOpsOperator) handleGetAgentVersionRequest(msg wsRequest[getAgentVersionRequest]) wsResponse[getAgentVersionResponse] {
+	// Return version
+	return wsResponse[getAgentVersionResponse]{
+		MsgId:   msg.MsgId,
+		MsgType: msg.MsgType,
+		Error:   nil,
+		Body: getAgentVersionResponse{
+			Version: f.agentVersion,
+		},
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Options
 // ---------------------------------------------------------------------------
@@ -303,6 +355,12 @@ func (f *FireOpsOperator) handleDestroyRequest(msg wsRequest[destroyRequest]) ws
 func WithFireOpsOperatorNetwork(network string) func(*FireOpsOperator) {
 	return func(foo *FireOpsOperator) {
 		foo.fireopsNetwork = network
+	}
+}
+
+func WithFireOpsOperatorVersion(version string) func(*FireOpsOperator) {
+	return func(foo *FireOpsOperator) {
+		foo.agentVersion = version
 	}
 }
 
@@ -320,6 +378,7 @@ func NewFireOpsOperator(ctx context.Context, logger log.ILogger, dockerApi api.I
 		fireopsNetwork: "fireops",
 		retryInterval:  10 * time.Second,
 		wsMux:          sync.Mutex{},
+		agentVersion:   "",
 	}
 	for _, o := range opts {
 		o(f)

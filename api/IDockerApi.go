@@ -7,6 +7,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/fireops-software/fireops-edge-agent/domain"
 	"github.com/uoul/go-common/async"
 )
 
@@ -29,6 +30,7 @@ type IDockerApi interface {
 	CreateContainer(ctx context.Context, image string, name string, networkIds []string, portForwards map[HostPort]ContainerPort, env []string) chan async.ActionResult[container.CreateResponse]
 	StartContainer(ctx context.Context, containerId string) chan async.ActionResult[any]
 	RemoveContainer(ctx context.Context, containerId string) chan async.ActionResult[any]
+	GetContainerLogs(ctx context.Context, containerId string, len uint) chan async.ActionResult[[]domain.ContainerLogEntry]
 	// Image management
 	PruneImages(ctx context.Context, all bool) chan async.ActionResult[image.PruneReport]
 	// Networks

@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/binary"
+	"fmt"
 	"io"
 
 	"github.com/docker/docker/api/types/container"
@@ -13,6 +15,7 @@ import (
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/uoul/go-common/async"
 
+	"github.com/fireops-software/fireops-edge-agent/domain"
 	appError "github.com/fireops-software/fireops-edge-agent/error"
 )
 
@@ -24,6 +27,39 @@ type DockerApi struct {
 	docker *client.Client
 
 	namespace string
+}
+
+// GetContainerLogs implements IDockerApi.
+func (d *DockerApi) GetContainerLogs(ctx context.Context, containerId string, len uint) chan async.ActionResult[[]domain.ContainerLogEntry] {
+	r := make(chan async.ActionResult[[]domain.ContainerLogEntry], 1)
+	go func() {
+		reader, err := d.docker.ContainerLogs(ctx, containerId, container.LogsOptions{
+			ShowStdout: true,
+			ShowStderr: true,
+			Timestamps: false,
+			Follow:     false,
+			Tail:       fmt.Sprintf("%d", len),
+		})
+		if err != nil {
+			r <- async.NewErrorActionResult[[]domain.ContainerLogEntry](
+				appError.NewErrDockerApi("failed to create log reader - %v", err),
+			)
+			return
+		}
+		defer reader.Close()
+		logEntries, err := parseDockerLogs(reader)
+		if err != nil {
+			r <- async.NewErrorActionResult[[]domain.ContainerLogEntry](
+				appError.NewErrDockerApi("failed to parse container logs"),
+			)
+			return
+		}
+		r <- async.ActionResult[[]domain.ContainerLogEntry]{
+			Result: logEntries,
+			Error:  nil,
+		}
+	}()
+	return r
 }
 
 // CreateNetwork implements IDockerApi.
@@ -121,8 +157,8 @@ func (d *DockerApi) CreateContainer(ctx context.Context, img string, name string
 				},
 			},
 			&container.HostConfig{
-				PortBindings:  portBindings,
-				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+				PortBindings: portBindings,
+				//RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			&network.NetworkingConfig{}, v1.DescriptorEmptyJSON.Platform, name)
 		if err != nil {
@@ -202,6 +238,44 @@ func (d *DockerApi) pullImage(ctx context.Context, img string) error {
 		return appError.NewErrDockerApi("failed to read image - %v", err)
 	}
 	return nil
+}
+
+func parseDockerLogs(reader io.Reader) ([]domain.ContainerLogEntry, error) {
+	entries := []domain.ContainerLogEntry{}
+	for {
+		// Read the 8-byte header
+		header := make([]byte, 8)
+		_, err := io.ReadFull(reader, header)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+		// Extract stream type and message size
+		streamType := header[0]
+		messageSize := binary.BigEndian.Uint32(header[4:8])
+		// Read the actual log message
+		message := make([]byte, messageSize)
+		_, err = io.ReadFull(reader, message)
+		if err != nil {
+			return nil, err
+		}
+		// Process based on stream type
+		switch streamType {
+		case 1: // stdout
+			entries = append(entries, domain.ContainerLogEntry{
+				Stream:  "stdout",
+				Message: string(message),
+			})
+		case 2: // stderr
+			entries = append(entries, domain.ContainerLogEntry{
+				Stream:  "stderr",
+				Message: string(message),
+			})
+		}
+	}
+	return entries, nil
 }
 
 func NewDockerApi(namespace string, opts ...func(*DockerApi)) (IDockerApi, error) {

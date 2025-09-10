@@ -64,6 +64,8 @@ func main() {
 		docker,
 		*fireOpsApi,
 		*fireOpsToken,
+		services.WithFireOpsOperatorVersion(VERSION),
+		services.WithFireOpsOperatorNetwork(*namespace),
 	)
 
 	// Wait until stop
