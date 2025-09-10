@@ -24,8 +24,8 @@ const (
 	WS_BUFFER_SIZE = 1024
 
 	MESSAGE_TYPE_GET_CONTAINERS     = msgType("GetContainers")
-	MESSAGE_TYPE_INSTALL            = msgType("Install")
-	MESSAGE_TYPE_DESTROY            = msgType("Destroy")
+	MESSAGE_TYPE_INSTALL            = msgType("InstallContainers")
+	MESSAGE_TYPE_DESTROY            = msgType("DestroyContainers")
 	MESSAGE_TYPE_GET_CONTAINER_LOGS = msgType("GetContainerLogs")
 	MESSAGE_TYPE_GET_AGENT_VERSION  = msgType("GetAgentVersion")
 )
