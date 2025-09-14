@@ -88,9 +88,7 @@ type getLogsRequest struct {
 	ContainerId string
 	Len         uint
 }
-type getLogsResponse struct {
-	LogEntries []domain.ContainerLogEntry
-}
+type getLogsResponse []domain.ContainerLogEntry
 
 // ---------------------------------------------------------------------------
 // Private
@@ -98,7 +96,7 @@ type getLogsResponse struct {
 
 func (f *FireOpsOperator) run() error {
 	// Create Websocket Config
-	ws, _, err := websocket.DefaultDialer.DialContext(f.ctx, f.fireOpsApi.String(), http.Header{"API-Key": []string{f.fireOpsApiKey}})
+	ws, _, err := websocket.DefaultDialer.DialContext(f.ctx, f.fireOpsApi.String(), http.Header{"Api-Key": []string{f.fireOpsApiKey}})
 	if err != nil {
 		return appError.NewErrFireOpsApi("failed to create websocket - %v", err)
 	}
@@ -330,9 +328,7 @@ func (f *FireOpsOperator) handleGetLogsRequest(msg wsRequest[getLogsRequest]) ws
 		MsgId:   msg.MsgId,
 		MsgType: msg.MsgType,
 		Error:   logEntries.Error,
-		Body: getLogsResponse{
-			LogEntries: logEntries.Result,
-		},
+		Body:    logEntries.Result,
 	}
 }
 
