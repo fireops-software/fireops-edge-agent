@@ -100,6 +100,7 @@ func (f *FireOpsOperator) run() error {
 	if err != nil {
 		return appError.NewErrFireOpsApi("failed to create websocket - %v", err)
 	}
+	f.logger.Infof("Successfully connected to Websocket interface %s", f.fireOpsApi.String())
 	defer func() {
 		// Send close message to client
 		closeMessage := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "fireops-edge-agent close connection")
