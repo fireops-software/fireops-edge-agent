@@ -23,15 +23,15 @@ func main() {
 	logLvl := flag.String("logLvl", "INFO", "OFF,FATAL,ERROR,WARNING,INFO,DEBUG,TRACE")
 	namespace := flag.String("namespace", "fireops", "namespace(label) for docker resources")
 	fireOpsApiStr := flag.String("api", "", "Api endpoint for fireops websocket connection (required)")
-	fireOpsToken := flag.String("token", "", "Api token for fireops api (required)")
+	fireOpsApiKey := flag.String("apiKey", "", "Api key for fireops api (required)")
 	flag.Parse()
 
 	// Check flags
 	if len(*fireOpsApiStr) <= 0 {
 		panic(fmt.Sprintf("Required flag \"-api\" not provided (%s --help)", os.Args[0]))
 	}
-	if len(*fireOpsToken) <= 0 {
-		panic(fmt.Sprintf("Required flag \"-token\" not provided (%s --help)", os.Args[0]))
+	if len(*fireOpsApiKey) <= 0 {
+		panic(fmt.Sprintf("Required flag \"-apiKey\" not provided (%s --help)", os.Args[0]))
 	}
 	fireOpsApi, err := url.Parse(*fireOpsApiStr)
 	if err != nil {
@@ -63,7 +63,7 @@ func main() {
 		logger,
 		docker,
 		*fireOpsApi,
-		*fireOpsToken,
+		*fireOpsApiKey,
 		services.WithFireOpsOperatorVersion(VERSION),
 		services.WithFireOpsOperatorNetwork(*namespace),
 	)

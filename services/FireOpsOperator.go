@@ -34,11 +34,11 @@ const (
 // Service type
 // ---------------------------------------------------------------------------
 type FireOpsOperator struct {
-	ctx          context.Context
-	logger       log.ILogger
-	dockerApi    api.IDockerApi
-	fireOpsApi   url.URL
-	fireOpsToken string
+	ctx           context.Context
+	logger        log.ILogger
+	dockerApi     api.IDockerApi
+	fireOpsApi    url.URL
+	fireOpsApiKey string
 
 	fireopsNetwork string
 	retryInterval  time.Duration
@@ -98,7 +98,7 @@ type getLogsResponse struct {
 
 func (f *FireOpsOperator) run() error {
 	// Create Websocket Config
-	ws, _, err := websocket.DefaultDialer.DialContext(f.ctx, f.fireOpsApi.String(), http.Header{"Authorization": []string{f.fireOpsToken}})
+	ws, _, err := websocket.DefaultDialer.DialContext(f.ctx, f.fireOpsApi.String(), http.Header{"API-Key": []string{f.fireOpsApiKey}})
 	if err != nil {
 		return appError.NewErrFireOpsApi("failed to create websocket - %v", err)
 	}
@@ -367,13 +367,13 @@ func WithFireOpsOperatorVersion(version string) func(*FireOpsOperator) {
 // ---------------------------------------------------------------------------
 // Constructor
 // ---------------------------------------------------------------------------
-func NewFireOpsOperator(ctx context.Context, logger log.ILogger, dockerApi api.IDockerApi, fireOpsApi url.URL, fireOpsToken string, opts ...func(*FireOpsOperator)) *FireOpsOperator {
+func NewFireOpsOperator(ctx context.Context, logger log.ILogger, dockerApi api.IDockerApi, fireOpsApi url.URL, fireOpsApiKey string, opts ...func(*FireOpsOperator)) *FireOpsOperator {
 	f := &FireOpsOperator{
-		ctx:          ctx,
-		logger:       logger,
-		dockerApi:    dockerApi,
-		fireOpsApi:   fireOpsApi,
-		fireOpsToken: fireOpsToken,
+		ctx:           ctx,
+		logger:        logger,
+		dockerApi:     dockerApi,
+		fireOpsApi:    fireOpsApi,
+		fireOpsApiKey: fireOpsApiKey,
 
 		fireopsNetwork: "fireops",
 		retryInterval:  10 * time.Second,
