@@ -159,8 +159,8 @@ func (d *DockerApi) CreateContainer(ctx context.Context, img string, name string
 				},
 			},
 			&container.HostConfig{
-				PortBindings: portBindings,
-				//RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+				PortBindings:  portBindings,
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			&network.NetworkingConfig{}, v1.DescriptorEmptyJSON.Platform, name)
 		if err != nil {
