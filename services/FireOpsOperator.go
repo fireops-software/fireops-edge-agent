@@ -42,6 +42,7 @@ type FireOpsOperator struct {
 
 	fireopsNetwork string
 	retryInterval  time.Duration
+	maxReqDuration time.Duration
 	agentVersion   string
 
 	wsMux sync.Mutex
@@ -95,13 +96,18 @@ type getLogsResponse []domain.ContainerLogEntry
 // ---------------------------------------------------------------------------
 
 func (f *FireOpsOperator) run() error {
+	// Create connection context
+	ctx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
 	// Create Websocket Config
-	ws, _, err := websocket.DefaultDialer.DialContext(f.ctx, f.fireOpsApi.String(), http.Header{"Api-Key": []string{f.fireOpsApiKey}})
+	ws, _, err := websocket.DefaultDialer.DialContext(ctx, f.fireOpsApi.String(), http.Header{"Api-Key": []string{f.fireOpsApiKey}})
 	if err != nil {
 		return appError.NewErrFireOpsApi("failed to create websocket - %v", err)
 	}
 	f.logger.Infof("Successfully connected to Websocket interface %s", f.fireOpsApi.String())
 	defer func() {
+		// Cancel context
+		cancel()
 		// Send close message to client
 		closeMessage := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "fireops-edge-agent close connection")
 		ws.WriteMessage(websocket.CloseMessage, closeMessage)
@@ -119,27 +125,27 @@ func (f *FireOpsOperator) run() error {
 		switch raw.MsgType {
 		case MESSAGE_TYPE_GET_CONTAINERS:
 			f.logger.Debugf("New incomming %s request %v", MESSAGE_TYPE_GET_CONTAINERS, string(raw.Body))
-			if err := routeMsg(ws, f.sendMessage, raw, f.handleGetDeploymentRequest); err != nil {
+			if err := routeMsg(ctx, ws, f.sendMessage, raw, f.handleGetDeploymentRequest); err != nil {
 				return err
 			}
 		case MESSAGE_TYPE_INSTALL:
 			f.logger.Debugf("New incomming %s request %v", MESSAGE_TYPE_INSTALL, string(raw.Body))
-			if err := routeMsg(ws, f.sendMessage, raw, f.handleInstallRequest); err != nil {
+			if err := routeMsg(ctx, ws, f.sendMessage, raw, f.handleInstallRequest); err != nil {
 				return err
 			}
 		case MESSAGE_TYPE_DESTROY:
 			f.logger.Debugf("New incomming %s request %v", MESSAGE_TYPE_DESTROY, string(raw.Body))
-			if err := routeMsg(ws, f.sendMessage, raw, f.handleDestroyRequest); err != nil {
+			if err := routeMsg(ctx, ws, f.sendMessage, raw, f.handleDestroyRequest); err != nil {
 				return err
 			}
 		case MESSAGE_TYPE_GET_CONTAINER_LOGS:
 			f.logger.Debugf("New incomming %s request %v", MESSAGE_TYPE_GET_CONTAINER_LOGS, string(raw.Body))
-			if err := routeMsg(ws, f.sendMessage, raw, f.handleGetLogsRequest); err != nil {
+			if err := routeMsg(ctx, ws, f.sendMessage, raw, f.handleGetLogsRequest); err != nil {
 				return err
 			}
 		case MESSAGE_TYPE_GET_AGENT_VERSION:
 			f.logger.Debugf("New incomming %s request %v", MESSAGE_TYPE_GET_AGENT_VERSION, string(raw.Body))
-			if err := routeMsg(ws, f.sendMessage, raw, f.handleGetAgentVersionRequest); err != nil {
+			if err := routeMsg(ctx, ws, f.sendMessage, raw, f.handleGetAgentVersionRequest); err != nil {
 				return err
 			}
 		default:
@@ -156,7 +162,7 @@ func (f *FireOpsOperator) sendMessage(ws *websocket.Conn, msg any) error {
 	return ws.WriteJSON(msg)
 }
 
-func routeMsg[I, O any](ws *websocket.Conn, sendFunc func(*websocket.Conn, any) error, msg wsRequest[json.RawMessage], handler func(wsRequest[I]) wsResponse[O]) error {
+func routeMsg[I, O any](ctx context.Context, ws *websocket.Conn, sendFunc func(*websocket.Conn, any) error, msg wsRequest[json.RawMessage], handler func(context.Context, wsRequest[I]) wsResponse[O]) error {
 	body := *new(I)
 	err := json.Unmarshal(msg.Body, &body)
 	if err != nil {
@@ -164,7 +170,7 @@ func routeMsg[I, O any](ws *websocket.Conn, sendFunc func(*websocket.Conn, any) 
 			return err
 		}
 	} else {
-		if err := sendFunc(ws, handler(wsRequest[I]{MsgId: msg.MsgId, MsgType: msg.MsgType, Body: body})); err != nil {
+		if err := sendFunc(ws, handler(ctx, wsRequest[I]{MsgId: msg.MsgId, MsgType: msg.MsgType, Body: body})); err != nil {
 			return err
 		}
 	}
@@ -208,10 +214,7 @@ func (f *FireOpsOperator) cleanDocker(ctx context.Context) error {
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
-func (f *FireOpsOperator) handleGetDeploymentRequest(msg wsRequest[getDeploymentRequest]) wsResponse[getDeploymentResponse] {
-	// Create Context with timeout for Docker api call
-	ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
-	defer cancel()
+func (f *FireOpsOperator) handleGetDeploymentRequest(ctx context.Context, msg wsRequest[getDeploymentRequest]) wsResponse[getDeploymentResponse] {
 	// Get Running containers from docker api
 	f.logger.Debugf("Listing all containers...")
 	containers := <-f.dockerApi.ListContainers(ctx)
@@ -225,10 +228,7 @@ func (f *FireOpsOperator) handleGetDeploymentRequest(msg wsRequest[getDeployment
 	}
 }
 
-func (f *FireOpsOperator) handleInstallRequest(msg wsRequest[installRequest]) wsResponse[installResponse] {
-	// Create Context with timeout for Docker api call
-	ctx, cancel := context.WithTimeout(f.ctx, 60*time.Second)
-	defer cancel()
+func (f *FireOpsOperator) handleInstallRequest(ctx context.Context, msg wsRequest[installRequest]) wsResponse[installResponse] {
 	// Clean docker
 	if err := f.cleanDocker(ctx); err != nil {
 		return wsResponse[installResponse]{
@@ -308,10 +308,7 @@ func (f *FireOpsOperator) handleInstallRequest(msg wsRequest[installRequest]) ws
 	}
 }
 
-func (f *FireOpsOperator) handleDestroyRequest(msg wsRequest[destroyRequest]) wsResponse[destroyResponse] {
-	// Create Context with timeout for Docker api call
-	ctx, cancel := context.WithTimeout(f.ctx, 30*time.Second)
-	defer cancel()
+func (f *FireOpsOperator) handleDestroyRequest(ctx context.Context, msg wsRequest[destroyRequest]) wsResponse[destroyResponse] {
 	return wsResponse[destroyResponse]{
 		MsgId:   msg.MsgId,
 		MsgType: msg.MsgType,
@@ -319,10 +316,7 @@ func (f *FireOpsOperator) handleDestroyRequest(msg wsRequest[destroyRequest]) ws
 	}
 }
 
-func (f *FireOpsOperator) handleGetLogsRequest(msg wsRequest[getLogsRequest]) wsResponse[getLogsResponse] {
-	// Create Context with timeout for Docker api call
-	ctx, cancel := context.WithTimeout(f.ctx, 30*time.Second)
-	defer cancel()
+func (f *FireOpsOperator) handleGetLogsRequest(ctx context.Context, msg wsRequest[getLogsRequest]) wsResponse[getLogsResponse] {
 	// Get logs of container
 	logEntries := <-f.dockerApi.GetContainerLogs(ctx, msg.Body.ContainerId, msg.Body.Len)
 	return wsResponse[getLogsResponse]{
@@ -333,7 +327,7 @@ func (f *FireOpsOperator) handleGetLogsRequest(msg wsRequest[getLogsRequest]) ws
 	}
 }
 
-func (f *FireOpsOperator) handleGetAgentVersionRequest(msg wsRequest[getAgentVersionRequest]) wsResponse[getAgentVersionResponse] {
+func (f *FireOpsOperator) handleGetAgentVersionRequest(ctx context.Context, msg wsRequest[getAgentVersionRequest]) wsResponse[getAgentVersionResponse] {
 	// Return version
 	return wsResponse[getAgentVersionResponse]{
 		MsgId:   msg.MsgId,
@@ -374,6 +368,7 @@ func NewFireOpsOperator(ctx context.Context, logger log.ILogger, dockerApi api.I
 
 		fireopsNetwork: "fireops",
 		retryInterval:  10 * time.Second,
+		maxReqDuration: time.Hour,
 		wsMux:          sync.Mutex{},
 		agentVersion:   "",
 	}

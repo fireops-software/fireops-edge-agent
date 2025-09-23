@@ -14,6 +14,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/uoul/go-common/async"
+	"github.com/uoul/go-common/log"
 
 	"github.com/fireops-software/fireops-edge-agent/domain"
 	appError "github.com/fireops-software/fireops-edge-agent/error"
@@ -25,6 +26,7 @@ const (
 
 type DockerApi struct {
 	docker *client.Client
+	logger log.ILogger
 
 	namespace string
 }
@@ -229,6 +231,7 @@ func createPortBindings(portForwards map[HostPort]ContainerPort) (nat.PortMap, n
 
 func (d *DockerApi) pullImage(ctx context.Context, img string) error {
 	// Pull image
+	d.logger.Debugf("Pulling image %s...", img)
 	reader, err := d.docker.ImagePull(ctx, img, image.PullOptions{})
 	if err != nil {
 		return appError.NewErrDockerApi("failed to pull image - %v", err)
@@ -278,7 +281,7 @@ func parseDockerLogs(reader io.Reader) ([]domain.ContainerLogEntry, error) {
 	return entries, nil
 }
 
-func NewDockerApi(namespace string, opts ...func(*DockerApi)) (IDockerApi, error) {
+func NewDockerApi(logger log.ILogger, namespace string, opts ...func(*DockerApi)) (IDockerApi, error) {
 	dockerClient, err := client.NewClientWithOpts(
 		client.FromEnv,
 		client.WithAPIVersionNegotiation(),
@@ -289,6 +292,7 @@ func NewDockerApi(namespace string, opts ...func(*DockerApi)) (IDockerApi, error
 	d := &DockerApi{
 		docker:    dockerClient,
 		namespace: namespace,
+		logger:    logger,
 	}
 	for _, o := range opts {
 		o(d)

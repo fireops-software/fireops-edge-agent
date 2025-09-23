@@ -50,7 +50,7 @@ func main() {
 	)
 
 	// Create DockerApi
-	docker, err := api.NewDockerApi(*namespace)
+	docker, err := api.NewDockerApi(logger, *namespace)
 	if err != nil {
 		logger.Fatalf("failed to create docker api - %v", err)
 		return
