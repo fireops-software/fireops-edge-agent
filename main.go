@@ -49,6 +49,9 @@ func main() {
 		),
 	)
 
+	// Print Agent version
+	logger.Infof("Starting fireops-edge-agent version: %s", VERSION)
+
 	// Create DockerApi
 	docker, err := api.NewDockerApi(logger, *namespace)
 	if err != nil {
