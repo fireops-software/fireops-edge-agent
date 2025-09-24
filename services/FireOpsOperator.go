@@ -218,6 +218,9 @@ func (f *FireOpsOperator) handleGetDeploymentRequest(ctx context.Context, msg ws
 	// Get Running containers from docker api
 	f.logger.Debugf("Listing all containers...")
 	containers := <-f.dockerApi.ListContainers(ctx)
+	if containers.Error != nil {
+		f.logger.Error(containers.Error.Error())
+	}
 	f.logger.Debugf("List of all containers runnning in context: %v", containers.Result)
 	// Return current state
 	return wsResponse[getDeploymentResponse]{
@@ -231,6 +234,7 @@ func (f *FireOpsOperator) handleGetDeploymentRequest(ctx context.Context, msg ws
 func (f *FireOpsOperator) handleInstallRequest(ctx context.Context, msg wsRequest[installRequest]) wsResponse[installResponse] {
 	// Clean docker
 	if err := f.cleanDocker(ctx); err != nil {
+		f.logger.Error(err.Error())
 		return wsResponse[installResponse]{
 			MsgId:   msg.MsgId,
 			MsgType: msg.MsgType,
@@ -241,6 +245,7 @@ func (f *FireOpsOperator) handleInstallRequest(ctx context.Context, msg wsReques
 	f.logger.Debugf("Creating docker network %s...", f.fireopsNetwork)
 	dockerNet := <-f.dockerApi.CreateNetwork(ctx, f.fireopsNetwork, network.NetworkBridge)
 	if dockerNet.Error != nil {
+		f.logger.Error(dockerNet.Error.Error())
 		return wsResponse[installResponse]{
 			MsgId:   msg.MsgId,
 			MsgType: msg.MsgType,
@@ -269,6 +274,7 @@ func (f *FireOpsOperator) handleInstallRequest(ctx context.Context, msg wsReques
 			env,
 		)
 		if create.Error != nil {
+			f.logger.Error(create.Error.Error())
 			return wsResponse[installResponse]{
 				MsgId:   msg.MsgId,
 				MsgType: msg.MsgType,
@@ -280,6 +286,7 @@ func (f *FireOpsOperator) handleInstallRequest(ctx context.Context, msg wsReques
 		f.logger.Debugf("Starting docker container: %s...", service.ServiceName)
 		start := <-f.dockerApi.StartContainer(ctx, create.Result.ID)
 		if start.Error != nil {
+			f.logger.Error(start.Error.Error())
 			return wsResponse[installResponse]{
 				MsgId:   msg.MsgId,
 				MsgType: msg.MsgType,
@@ -292,6 +299,7 @@ func (f *FireOpsOperator) handleInstallRequest(ctx context.Context, msg wsReques
 	f.logger.Debugf("List running containers...")
 	containers := <-f.dockerApi.ListContainers(ctx)
 	if containers.Error != nil {
+		f.logger.Error(containers.Error.Error())
 		return wsResponse[installResponse]{
 			MsgId:   msg.MsgId,
 			MsgType: msg.MsgType,
@@ -309,16 +317,23 @@ func (f *FireOpsOperator) handleInstallRequest(ctx context.Context, msg wsReques
 }
 
 func (f *FireOpsOperator) handleDestroyRequest(ctx context.Context, msg wsRequest[destroyRequest]) wsResponse[destroyResponse] {
+	err := f.cleanDocker(ctx)
+	if err != nil {
+		f.logger.Error(err.Error())
+	}
 	return wsResponse[destroyResponse]{
 		MsgId:   msg.MsgId,
 		MsgType: msg.MsgType,
-		Error:   f.cleanDocker(ctx),
+		Error:   err,
 	}
 }
 
 func (f *FireOpsOperator) handleGetLogsRequest(ctx context.Context, msg wsRequest[getLogsRequest]) wsResponse[getLogsResponse] {
 	// Get logs of container
 	logEntries := <-f.dockerApi.GetContainerLogs(ctx, msg.Body.ContainerId, msg.Body.Len)
+	if logEntries.Error != nil {
+		f.logger.Error(logEntries.Error.Error())
+	}
 	return wsResponse[getLogsResponse]{
 		MsgId:   msg.MsgId,
 		MsgType: msg.MsgType,
