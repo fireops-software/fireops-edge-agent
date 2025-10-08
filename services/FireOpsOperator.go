@@ -122,37 +122,38 @@ func (f *FireOpsOperator) run() error {
 			return err
 		}
 		// Route message based on message type
-		switch raw.MsgType {
-		case MESSAGE_TYPE_GET_CONTAINERS:
-			f.logger.Debugf("New incomming %s request %v", MESSAGE_TYPE_GET_CONTAINERS, string(raw.Body))
-			if err := routeMsg(ctx, ws, f.sendMessage, raw, f.handleGetDeploymentRequest); err != nil {
-				return err
+		go func() {
+			// Copy raw data into request
+			req := raw
+			f.logger.Debugf("New incomming %s request with id %s: %v", req.MsgType, req.MsgId, string(req.Body))
+			switch req.MsgType {
+			case MESSAGE_TYPE_GET_CONTAINERS:
+				if err := routeMsg(ctx, ws, f.sendMessage, req, f.handleGetDeploymentRequest); err != nil {
+					f.logger.Errorf("Request with id %s failed - %v", req.MsgId, err.Error())
+				}
+			case MESSAGE_TYPE_INSTALL:
+				if err := routeMsg(ctx, ws, f.sendMessage, req, f.handleInstallRequest); err != nil {
+					f.logger.Errorf("Request with id %s failed - %v", req.MsgId, err.Error())
+				}
+			case MESSAGE_TYPE_DESTROY:
+				if err := routeMsg(ctx, ws, f.sendMessage, req, f.handleDestroyRequest); err != nil {
+					f.logger.Errorf("Request with id %s failed - %v", req.MsgId, err.Error())
+				}
+			case MESSAGE_TYPE_GET_CONTAINER_LOGS:
+				if err := routeMsg(ctx, ws, f.sendMessage, req, f.handleGetLogsRequest); err != nil {
+					f.logger.Errorf("Request with id %s failed - %v", req.MsgId, err.Error())
+				}
+			case MESSAGE_TYPE_GET_AGENT_VERSION:
+				if err := routeMsg(ctx, ws, f.sendMessage, req, f.handleGetAgentVersionRequest); err != nil {
+					f.logger.Errorf("Request with id %s failed - %v", req.MsgId, err.Error())
+				}
+			default:
+				if err := f.sendMessage(ws, wsResponse[any]{MsgId: req.MsgId, MsgType: req.MsgType, Error: appError.NewErrUnsupportedMsgType("type %s is not supported", req.MsgType), Body: nil}); err != nil {
+					f.logger.Errorf("Request with id %s failed - %v", req.MsgId, err.Error())
+				}
 			}
-		case MESSAGE_TYPE_INSTALL:
-			f.logger.Debugf("New incomming %s request %v", MESSAGE_TYPE_INSTALL, string(raw.Body))
-			if err := routeMsg(ctx, ws, f.sendMessage, raw, f.handleInstallRequest); err != nil {
-				return err
-			}
-		case MESSAGE_TYPE_DESTROY:
-			f.logger.Debugf("New incomming %s request %v", MESSAGE_TYPE_DESTROY, string(raw.Body))
-			if err := routeMsg(ctx, ws, f.sendMessage, raw, f.handleDestroyRequest); err != nil {
-				return err
-			}
-		case MESSAGE_TYPE_GET_CONTAINER_LOGS:
-			f.logger.Debugf("New incomming %s request %v", MESSAGE_TYPE_GET_CONTAINER_LOGS, string(raw.Body))
-			if err := routeMsg(ctx, ws, f.sendMessage, raw, f.handleGetLogsRequest); err != nil {
-				return err
-			}
-		case MESSAGE_TYPE_GET_AGENT_VERSION:
-			f.logger.Debugf("New incomming %s request %v", MESSAGE_TYPE_GET_AGENT_VERSION, string(raw.Body))
-			if err := routeMsg(ctx, ws, f.sendMessage, raw, f.handleGetAgentVersionRequest); err != nil {
-				return err
-			}
-		default:
-			if err := f.sendMessage(ws, wsResponse[any]{MsgId: raw.MsgId, MsgType: raw.MsgType, Error: appError.NewErrUnsupportedMsgType("type %s is not supported", raw.MsgType), Body: nil}); err != nil {
-				return err
-			}
-		}
+			f.logger.Debugf("Finished request with id %s", req.MsgId)
+		}()
 	}
 }
 
