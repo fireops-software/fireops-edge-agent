@@ -6,28 +6,29 @@ FireOpsEdgeAgent is a docker manager, that requires docker under the hood.
 
 ## Usage
 ```
-Usage of ./fireops-agent:
+Usage of ./fireops-edge-agent-linux-amd64:
   -api string
         Api endpoint for fireops websocket connection (required)
+  -apiKey string
+        Api key for fireops api (required)
   -logLvl string
         OFF,FATAL,ERROR,WARNING,INFO,DEBUG,TRACE (default "INFO")
   -namespace string
         namespace(label) for docker resources (default "fireops")
-  -token string
-        Api token for fireops api (required)
+
 ```
 
 ## Request-Types
 The Request-Types are based on a given Datastructure. This structure defines common fields, that are necessary for routing the requests. All Requests/Responses contains a generic `Body`, that is specified by the given `MsgType`. Each messge contains a MsgId to be able to map a given request to a corresponding response (because async network communication in between). The common Respone-Types on the other hand conatins an additional Error field, which may hold some error message, if there is one. 
 
-### Get
-A Get request has to set the `MsgType` field to `"Get"`. This call initiate a request for the current system state or the current deployment. On successs, the Response contains the state of the running Docker infrastructure of the device, where `fireops-edge-agent` runs on, otherwise the error field contains the error message.
+### GetAgentVersion
+A GetAgentVersion request has to set the `MsgType` field to `"GetAgentVersion"`. This call returns the current agent version.
 
 **Request:**
 ```json
 {
   "MsgId":"f43aa496-8b6c-4967-ae2b-b65bb8ff2f9d",
-  "MsgType":"Get",
+  "MsgType":"GetAgentVersion",
   "Body":{}
 }
 ```
@@ -36,7 +37,62 @@ A Get request has to set the `MsgType` field to `"Get"`. This call initiate a re
 ```json
 {
   "MsgId": "f43aa496-8b6c-4967-ae2b-b65bb8ff2f9d",
-  "MsgType": "Get",
+  "MsgType": "GetAgentVersion",
+  "Error": null,
+  "Body": {
+    "Version": "<AGENT_VERSION>"
+  }
+}
+```
+
+### GetContainerLogs
+A GetContainerLogs request has to set the `MsgType` field to `"GetContainerLogs"`. This call returns the the logs for the requested container. The number of returned lines can be managed using the `Len` field in the request body.
+
+**Request:**
+```json
+{
+  "MsgId":"f43aa496-8b6c-4967-ae2b-b65bb8ff2f9d",
+  "MsgType":"GetContainerLogs",
+  "Body":{
+    "ContainerId": "<CONTAINER_ID>",
+    "Len": "<LENGTH>"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "MsgId": "f43aa496-8b6c-4967-ae2b-b65bb8ff2f9d",
+  "MsgType": "GetContainerLogs",
+  "Error": null,
+  "Body": [
+    {
+      "Stream": "<stdout | stderr>",
+      "Message": "<SOME_MESSAGE>",
+    },
+    ...
+  ]
+}
+```
+
+### GetContainers
+A Get request has to set the `MsgType` field to `"GetContainers"`. This call initiate a request for the current system state or the current deployment. On successs, the Response contains the state of the running Docker infrastructure of the device, where `fireops-edge-agent` runs on, otherwise the error field contains the error message.
+
+**Request:**
+```json
+{
+  "MsgId":"f43aa496-8b6c-4967-ae2b-b65bb8ff2f9d",
+  "MsgType":"GetContainers",
+  "Body":{}
+}
+```
+
+**Response:**
+```json
+{
+  "MsgId": "f43aa496-8b6c-4967-ae2b-b65bb8ff2f9d",
+  "MsgType": "GetContainers",
   "Error": null,
   "Body": [
     {
@@ -108,16 +164,16 @@ A Get request has to set the `MsgType` field to `"Get"`. This call initiate a re
 }
 ```
 
-### Install
-Install triggers a complete installation or replacement of the specified containers in request body, using the given specification in the request body. As response the currently running infrastructure is returned on success (same as Get request), otherwise an the error field contains the error message.
+### InstallContainers
+InstallContainers triggers a complete installation or replacement of the specified containers in request body, using the given specification in the request body. As response the currently running infrastructure is returned on success (same as Get request), otherwise an the error field contains the error message.
 
->**IMPORTANT:** It also replace a current installation, if the ServiceName overlaps
+>**IMPORTANT:** It also replace a current installation
 
 **Request:**
 ```json
 {
   "MsgId": "c405edd9-79a4-4886-8fa0-48e8105b48ec",
-  "MsgType": "Install",
+  "MsgType": "InstallContainers",
   "Body": [
     {
       "ServiceName": "fireops-edge-dashboard",
@@ -144,7 +200,7 @@ Install triggers a complete installation or replacement of the specified contain
 ```json
 {
   "MsgId": "c405edd9-79a4-4886-8fa0-48e8105b48ec",
-  "MsgType": "Install",
+  "MsgType": "InstallContainers",
   "Error": null,
   "Body": [
     {
@@ -216,14 +272,14 @@ Install triggers a complete installation or replacement of the specified contain
 }
 ```
 
-### Destroy
-A Destroy request destroys all resources, that correspondes to the fireops-edge-agend namespace (specified via -namespace at cli - default: fireops). The response contains an error message, if any error occured.
+### DestroyContainers
+A DestroyContainers request destroys all resources, that correspondes to the fireops-edge-agend namespace (specified via -namespace at cli - default: fireops). The response contains an error message, if any error occured.
 
 **Request:**
 ```json
 {
   "MsgId": "f4969dcc-ba2f-4388-a10e-f5ad2045f871",
-  "MsgType": "Destroy",
+  "MsgType": "DestroyContainers",
   "Body": {}
 }
 ```
@@ -231,7 +287,7 @@ A Destroy request destroys all resources, that correspondes to the fireops-edge-
 ```json
 {
   "MsgId": "f4969dcc-ba2f-4388-a10e-f5ad2045f871",
-  "MsgType": "Destroy",
+  "MsgType": "DestroyContainers",
   "Error": null,
   "Body": {}
 }
