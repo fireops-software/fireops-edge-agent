@@ -96,6 +96,13 @@ type getLogsResponse []domain.ContainerLogEntry
 // ---------------------------------------------------------------------------
 
 func (f *FireOpsOperator) run() error {
+	// Check if Docker is running
+	rCtx, rCtxCancel := context.WithTimeout(f.ctx, 5*time.Second)
+	containers := <-f.dockerApi.ListContainers(rCtx)
+	rCtxCancel()
+	if containers.Error != nil {
+		return containers.Error
+	}
 	// Create connection context
 	ctx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
@@ -104,7 +111,7 @@ func (f *FireOpsOperator) run() error {
 	if err != nil {
 		return appError.NewErrFireOpsApi("failed to create websocket - %v", err)
 	}
-	f.logger.Infof("Successfully connected to Websocket interface %s", f.fireOpsApi.String())
+	f.logger.Infof("Successfully connected to Websocket interface %s -> If you are currently installing fireops-edge for the first time, please follow the instructions on the website", f.fireOpsApi.String())
 	defer func() {
 		// Cancel context
 		cancel()
@@ -178,7 +185,7 @@ func routeMsg[I, O any](ctx context.Context, ws *websocket.Conn, sendFunc func(*
 	return nil
 }
 
-func (f *FireOpsOperator) cleanDocker(ctx context.Context) error {
+func (f *FireOpsOperator) cleanRunningConfig(ctx context.Context) error {
 	f.logger.Debugf("Listing all containers...")
 	containers := <-f.dockerApi.ListContainers(ctx)
 	if containers.Error != nil {
@@ -194,13 +201,6 @@ func (f *FireOpsOperator) cleanDocker(ctx context.Context) error {
 		}
 		f.logger.Debugf("Container %v removed", container.Names)
 	}
-	// Prune images
-	f.logger.Debugf("Prune images...")
-	imagePrune := <-f.dockerApi.PruneImages(ctx, true)
-	if imagePrune.Error != nil {
-		return imagePrune.Error
-	}
-	f.logger.Debugf("Images pruned %v", imagePrune.Result)
 	// Prune networks
 	f.logger.Debugf("Prune networks...")
 	netPrune := <-f.dockerApi.PruneNetworks(ctx)
@@ -208,6 +208,22 @@ func (f *FireOpsOperator) cleanDocker(ctx context.Context) error {
 		return netPrune.Error
 	}
 	f.logger.Debugf("Networks pruned %v", netPrune.Result)
+	// Return success
+	return nil
+}
+
+func (f *FireOpsOperator) cleanDocker(ctx context.Context) error {
+	// Clean fireops stuff
+	if err := f.cleanRunningConfig(ctx); err != nil {
+		return err
+	}
+	// Prune images
+	f.logger.Debugf("Prune images...")
+	imagePrune := <-f.dockerApi.PruneImages(ctx, true)
+	if imagePrune.Error != nil {
+		return imagePrune.Error
+	}
+	f.logger.Debugf("Images pruned %v", imagePrune.Result)
 	// Return success
 	return nil
 }
@@ -234,7 +250,7 @@ func (f *FireOpsOperator) handleGetDeploymentRequest(ctx context.Context, msg ws
 
 func (f *FireOpsOperator) handleInstallRequest(ctx context.Context, msg wsRequest[installRequest]) wsResponse[installResponse] {
 	// Clean docker
-	if err := f.cleanDocker(ctx); err != nil {
+	if err := f.cleanRunningConfig(ctx); err != nil {
 		f.logger.Error(err.Error())
 		return wsResponse[installResponse]{
 			MsgId:   msg.MsgId,
@@ -383,7 +399,7 @@ func NewFireOpsOperator(ctx context.Context, logger log.ILogger, dockerApi api.I
 		fireOpsApiKey: fireOpsApiKey,
 
 		fireopsNetwork: "fireops",
-		retryInterval:  10 * time.Second,
+		retryInterval:  30 * time.Second,
 		maxReqDuration: time.Hour,
 		wsMux:          sync.Mutex{},
 		agentVersion:   "",
